@@ -115,15 +115,17 @@ void eval(char *cmdline)
 	int pipes[MAXARGS - 1][2];
 	int cmd_limit = num_cmds - 1;
 
+	for (int i = 0; i < num_cmds - 1; i++)
+	{
+		if(pipe(pipes[i]) < 0)
+		{
+			printf("Pipe error\n");
+			return;
+		}
+	}
+
 	for (int i = 0; i < num_cmds; i++)
 	{
-		if ( i != num_cmds - 1)
-		{
-			if (pipe(pipes[i])) 
-			{
-				printf("Pipe not created properly");
-			}
-		}
 		pid = fork();
 
 		if (pid == 0) 
@@ -136,20 +138,19 @@ void eval(char *cmdline)
 				setpgid(0, group_id);
 			}
 
-			if (stdin_redir[i] > 0) 
+			if (stdin_redir[i] >= 0) 
 			{
 				FILE *temp = fopen(argv[stdin_redir[i]], "r");
 				int temp_desc = fileno(temp);
 				dup2(temp_desc, STDIN_FILENO);
 				fclose(temp);
 			}
-			if (stdout_redir[i] > 0)
-			{
-                    		FILE *temp = fopen(argv[stdout_redir[i]], "w");
-                    		int temp_desc = fileno(temp);
-                    		dup2(temp_desc, STDOUT_FILENO);
-				fclose(temp);
-               		}
+                    	if (stdout_redir[i] >= 0) {
+				FILE *temp = fopen(argv[stdout_redir[i]], "w");
+    				int temp_desc = fileno(temp);
+   				dup2(temp_desc, STDOUT_FILENO);  // Redirect stdout only
+    				fclose(temp);
+			}
 			if ( i <  num_cmds - 1) 
 			{
 				dup2(pipes[i][1], STDOUT_FILENO);
@@ -171,34 +172,26 @@ void eval(char *cmdline)
 				printf("%s: Command not found\n", argv[0]);
 				exit(1);
 			}
-			if (pid != 0) 
+		}
+		
+		if (pid > 0) 
+		{
+			child_pids[i] = pid;
+			if (i == 0) 
 			{
-				child_pids[i] = pid;
-
 				group_id = child_pids[0];
-				setpgid(child_pids[i], group_id);
 			}
-		}
+			setpgid(child_pids[i], group_id);
 
-		if (i == 0) 
-		{
-			group_id = pid;
-		}
+			if (i < cmd_limit) 
+			{
+				close(pipes[i][1]);
+			}
 
-		setpgid(pid, group_id);
-
-		if (i < cmd_limit) 
-		{
-			close(pipes[i][1]);
-		}
-
-		if (i > 0) 
-		{
-			close(pipes[i - 1][0]);
-		}
-		else
-		{
-			return;
+			if (i > 0) 
+			{
+				close(pipes[i - 1][0]);
+			}
 		}
 	}
 
@@ -206,7 +199,6 @@ void eval(char *cmdline)
 		int status;
 		waitpid(child_pids[i], &status, 0);
 	}
-	return;
 }
 /* 
  * parseargs - Parse the arguments to identify pipelined commands
