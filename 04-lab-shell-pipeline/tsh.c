@@ -1,7 +1,7 @@
 /* 
  * tsh - A tiny shell program with job control
  * 
- * <Put your name and login ID here>
+ * Alex Mercer mercera
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -101,9 +101,113 @@ int main(int argc, char **argv)
 */
 void eval(char *cmdline) 
 {
+	char *argv[MAXLINE];
+	parseline(cmdline, argv);
+	int cmds[MAXARGS];
+	int stdin_redir[MAXLINE], stdout_redir[MAXLINE];
+	pid_t pid, child_pids[MAXARGS];
+	int group_id = -1;
+	int num_cmds = parseargs(argv, cmds, stdin_redir, stdout_redir);  
+	
+	if(argv[0] == NULL) return;
+	if(builtin_cmd(argv) == 1) return; 
+	
+	int pipes[MAXARGS - 1][2];
+	int cmd_limit = num_cmds - 1;
+
+	for (int i = 0; i < num_cmds; i++)
+	{
+		if ( i != num_cmds - 1)
+		{
+			if (pipe(pipes[i])) 
+			{
+				printf("Pipe not created properly");
+			}
+		}
+		pid = fork();
+
+		if (pid == 0) 
+		{
+			if (i == 0) 
+			{
+				setpgid(0,0);
+			}
+			else {
+				setpgid(0, group_id);
+			}
+
+			if (stdin_redir[i] > 0) 
+			{
+				FILE *temp = fopen(argv[stdin_redir[i]], "r");
+				int temp_desc = fileno(temp);
+				dup2(temp_desc, STDIN_FILENO);
+				fclose(temp);
+			}
+			if (stdout_redir[i] > 0)
+			{
+                    		FILE *temp = fopen(argv[stdout_redir[i]], "w");
+                    		int temp_desc = fileno(temp);
+                    		dup2(temp_desc, STDOUT_FILENO);
+				fclose(temp);
+               		}
+			if ( i <  num_cmds - 1) 
+			{
+				dup2(pipes[i][1], STDOUT_FILENO);
+			}
+
+			if (i > 0) 
+			{
+				dup2(pipes[i-1][0], STDIN_FILENO);
+			}
+
+			for (int j = 0; j < cmd_limit; j++) 
+			{
+				close(pipes[j][0]);
+				close(pipes[j][1]);
+			}
+
+			if (execve(argv[cmds[i]], &argv[cmds[i]], environ) < 0)
+			{
+				printf("%s: Command not found\n", argv[0]);
+				exit(1);
+			}
+			if (pid != 0) 
+			{
+				child_pids[i] = pid;
+
+				group_id = child_pids[0];
+				setpgid(child_pids[i], group_id);
+			}
+		}
+
+		if (i == 0) 
+		{
+			group_id = pid;
+		}
+
+		setpgid(pid, group_id);
+
+		if (i < cmd_limit) 
+		{
+			close(pipes[i][1]);
+		}
+
+		if (i > 0) 
+		{
+			close(pipes[i - 1][0]);
+		}
+		else
+		{
+			return;
+		}
+	}
+
+	for (int i = 0; i < num_cmds; i++) {
+		int status;
+		waitpid(child_pids[i], &status, 0);
+	}
 	return;
 }
-
 /* 
  * parseargs - Parse the arguments to identify pipelined commands
  * 
@@ -228,6 +332,9 @@ int parseline(const char *cmdline, char **argv)
  */
 int builtin_cmd(char **argv) 
 {
+	if ( strcmp(argv[0], "quit") == 0) {
+		exit(0);
+	}
 	return 0;     /* not a builtin command */
 }
 
