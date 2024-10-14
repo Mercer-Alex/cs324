@@ -334,9 +334,7 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
-    struct job_t *job = getjobpid(jobs, pid);
-
-    while (job->state == FG){
+    while (pid == fgpid(jobs)){
         sleep(1);
     }
 	return;
@@ -365,8 +363,8 @@ void sigchld_handler(int sig)
         if (WIFSTOPPED(status)) {
             struct job_t *job = getjobpid(jobs, pid);
             if (job) {
-                job->state = ST;
                 printf("Job [%d] (%d) stopped by signal %d\n", pid2jid(pid), pid, WSTOPSIG(status));
+                job->state = ST;
             }
         } else if (WIFSIGNALED(status)) {
             printf("Job [%d] (%d) terminated by signal %d\n", pid2jid(pid), pid, WTERMSIG(status));
@@ -386,10 +384,9 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
-    pid_t fg_pid = fgpid(jobs);  // Get the process ID of the foreground job
+    pid_t fg_pid = fgpid(jobs);
 
     if (fg_pid != 0) {
-        // Send SIGINT to the process group of the foreground job
         if (kill(-fg_pid, SIGINT) < 0) {
             unix_error("kill (sigint) error");
         }
