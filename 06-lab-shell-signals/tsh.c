@@ -165,50 +165,104 @@ int main(int argc, char **argv)
 */
 void eval(char *cmdline) 
 {
-    char *argv[MAXARGS];
-    char buf[MAXLINE];
-    int bg;
-    pid_t pid;
-    sigset_t mask;
-
-    strcpy(buf, cmdline);
-    bg = parseline(buf, argv);
-
-    if (argv[0] == NULL) return;
-
-    if (!builtin_cmd(argv)) { 
-        sigemptyset(&mask);
-        sigaddset(&mask, SIGCHLD);
-        sigaddset(&mask, SIGINT);
-        sigaddset(&mask, SIGTSTP);
-        sigprocmask(SIG_BLOCK, &mask, NULL);
+	char *argv[MAXLINE];
+	parseline(cmdline, argv);
+	int cmds[MAXARGS];
+	int stdin_redir[MAXLINE], stdout_redir[MAXLINE];
+	pid_t pid, child_pids[MAXARGS];
+	int group_id = -1;
+	int num_cmds = parseargs(argv, cmds, stdin_redir, stdout_redir);  
 	
-	pid = fork();
-        
-	if (pid == -1) {
-		exit(1);
-	}
-	if (pid == 0) {
-		setpgid(0, 0);
-		sigprocmask(SIG_UNBLOCK, &mask, NULL);
+	if(argv[0] == NULL) return;
+	if(builtin_cmd(argv) == 1) return; 
+	
+	int pipes[MAXARGS - 1][2];
+	int cmd_limit = num_cmds - 1;
 
-            	if (execve(argv[0], argv, environ) < 0) {
-                	printf("%s: Command not found.\n", argv[0]);
-			fflush(stdout);
-                	exit(1);
-	    	}
-		exit(0);
+	for (int i = 0; i < num_cmds - 1; i++)
+	{
+		if(pipe(pipes[i]) < 0)
+		{
+			printf("Pipe error\n");
+			return;
+		}
 	}
-	else {
-		setpgid(pid, pid);
-		addjob(jobs, pid, bg ? BG : FG, cmdline);
-		sigprocmask(SIG_UNBLOCK, &mask, NULL);
-		fflush(stdout);
-		printf("[%d] (%d) %s", pid2jid(pid), pid, cmdline);
+
+	for (int i = 0; i < num_cmds; i++)
+	{
+		pid = fork();
+
+		if (pid == 0) 
+		{
+			if (i == 0) 
+			{
+				setpgid(0,0);
+			}
+			else {
+				setpgid(0, group_id);
+			}
+
+			if (stdin_redir[i] >= 0) 
+			{
+				FILE *temp = fopen(argv[stdin_redir[i]], "r");
+				int temp_desc = fileno(temp);
+				dup2(temp_desc, STDIN_FILENO);
+				fclose(temp);
+			}
+                    	if (stdout_redir[i] >= 0) {
+				FILE *temp = fopen(argv[stdout_redir[i]], "w");
+    				int temp_desc = fileno(temp);
+   				dup2(temp_desc, STDOUT_FILENO);  // Redirect stdout only
+    				fclose(temp);
+			}
+			if ( i <  num_cmds - 1) 
+			{
+				dup2(pipes[i][1], STDOUT_FILENO);
+			}
+
+			if (i > 0) 
+			{
+				dup2(pipes[i-1][0], STDIN_FILENO);
+			}
+
+			for (int j = 0; j < cmd_limit; j++) 
+			{
+				close(pipes[j][0]);
+				close(pipes[j][1]);
+			}
+
+			if (execve(argv[cmds[i]], &argv[cmds[i]], environ) < 0)
+			{
+				printf("%s: Command not found\n", argv[0]);
+				exit(1);
+			}
+		}
+		
+		if (pid > 0) 
+		{
+			child_pids[i] = pid;
+			if (i == 0) 
+			{
+				group_id = child_pids[0];
+			}
+			setpgid(child_pids[i], group_id);
+
+			if (i < cmd_limit) 
+			{
+				close(pipes[i][1]);
+			}
+
+			if (i > 0) 
+			{
+				close(pipes[i - 1][0]);
+			}
+		}
 	}
-	waitfg(pid);
-    }
-    return;
+
+	for (int i = 0; i < num_cmds; i++) {
+		int status;
+		waitpid(child_pids[i], &status, 0);
+	}
 }
 
 /* 
