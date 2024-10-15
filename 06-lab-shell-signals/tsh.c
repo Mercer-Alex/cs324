@@ -183,8 +183,8 @@ void eval(char *cmdline)
         sigprocmask(SIG_BLOCK, &mask, NULL);
 
         if ((pid = fork()) == 0) {
-            sigprocmask(SIG_UNBLOCK, &mask, NULL);
             setpgid(0, 0);
+            sigprocmask(SIG_UNBLOCK, &mask, NULL);
 
             if (execve(argv[0], argv, environ) < 0) {
                 printf("%s: Command not found.\n", argv[0]);
@@ -193,8 +193,11 @@ void eval(char *cmdline)
             }
 			exit(0);
         }
-        addjob(jobs, pid, bg ? BG : FG, cmdline);
-        sigprocmask(SIG_UNBLOCK, &mask, NULL);
+		else {
+			setpgid(pid, pid);
+			addjob(jobs, pid, bg ? BG : FG, cmdline);
+			sigprocmask(SIG_UNBLOCK, &mask, NULL);
+		}
 
         if (!bg) {
             waitfg(pid);
@@ -202,7 +205,6 @@ void eval(char *cmdline)
             printf("[%d] (%d) %s", pid2jid(pid), pid, cmdline);
         }
     }
-	return;
 }
 
 /* 
