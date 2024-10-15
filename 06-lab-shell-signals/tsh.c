@@ -165,7 +165,7 @@ int main(int argc, char **argv)
 */
 void eval(char *cmdline) 
 {
-	char *argv[MAXARGS];
+    char *argv[MAXARGS];
     char buf[MAXLINE];
     int bg;
     pid_t pid;
@@ -173,6 +173,7 @@ void eval(char *cmdline)
 
     strcpy(buf, cmdline);
     bg = parseline(buf, argv);
+
     if (argv[0] == NULL) return;
 
     if (!builtin_cmd(argv)) { 
@@ -181,30 +182,33 @@ void eval(char *cmdline)
         sigaddset(&mask, SIGINT);
         sigaddset(&mask, SIGTSTP);
         sigprocmask(SIG_BLOCK, &mask, NULL);
+	
+	pid = fork();
+        
+	if (pid == -1) {
+		exit(1);
+	}
+	if (pid == 0) {
+		setpgid(0, 0);
+		sigprocmask(SIG_UNBLOCK, &mask, NULL);
 
-        if ((pid = fork()) == 0) {
-            setpgid(0, 0);
-            sigprocmask(SIG_UNBLOCK, &mask, NULL);
-
-            if (execve(argv[0], argv, environ) < 0) {
-                printf("%s: Command not found.\n", argv[0]);
-				fflush(stdout);
-                exit(1);
-            }
-			exit(0);
-        }
-		else {
-			setpgid(pid, pid);
-			addjob(jobs, pid, bg ? BG : FG, cmdline);
-			sigprocmask(SIG_UNBLOCK, &mask, NULL);
-		}
-
-        if (!bg) {
-            waitfg(pid);
-        } else {
-            printf("[%d] (%d) %s", pid2jid(pid), pid, cmdline);
-        }
+            	if (execve(argv[0], argv, environ) < 0) {
+                	printf("%s: Command not found.\n", argv[0]);
+			fflush(stdout);
+                	exit(1);
+	    	}
+		exit(0);
+	}
+	else {
+		setpgid(pid, pid);
+		addjob(jobs, pid, bg ? BG : FG, cmdline);
+		sigprocmask(SIG_UNBLOCK, &mask, NULL);
+		fflush(stdout);
+		printf("[%d] (%d) %s", pid2jid(pid), pid, cmdline);
+	}
+	waitfg(pid);
     }
+    return;
 }
 
 /* 
@@ -279,7 +283,7 @@ int builtin_cmd(char **argv)
         listjobs(jobs);
         return 1;
     }
-	return 0;     /* not a builtin command */
+    return 0;     /* not a builtin command */
 }
 
 /* 
@@ -287,48 +291,45 @@ int builtin_cmd(char **argv)
  */
 void do_bgfg(char **argv) 
 {
+	int jobNum = 0;
 	struct job_t *job = NULL;
-    pid_t pid;
-    int jid;
 
-    if (argv[1] == NULL) {
-        printf("%s command requires PID or %%jobid argument\n", argv[0]);
-        return;
-    }
+	if (argv[1] == NULL) {
+        	printf("%s command requires PID or %%jobid argument\n", argv[0]);
+        	return;
+    	}
+	else if (argv[1][0] != '%' && !atoi(argv[1])) {
+		printf("%s: argument must be a PID or %%jobid\n", argv[0]);
+		return;
+	}
+	else {
+		if(argv[1][0] == '%') 
+		{
+			jobNum = atoi(&argv[1][1]);
+		} else {
+			jobNum = pid2jid(argv[1][0]);
+		}
+		if (!jobNum) {
+			printf("(%d): No such process\n", argv[0][1]);
+			return;
+		}
+		job = getjobjid(jobs, jobNum);
+		if (job == NULL) {
+			printf("%s: No such job\n", argv[1]);
+			return;
+		}
+		pid_t jobPid = job->pid;
+		kill(-1*jobPid, SIGCONT);
 
-    if (argv[1][0] == '%') {
-        jid = atoi(&argv[1][1]);
-        job = getjobjid(jobs, jid);
-
-        if (job == NULL) {
-            printf("%s: No such job\n", argv[1]);
-            return;
-        }
-    } else if (isdigit(argv[1][0])) {
-        pid = atoi(argv[1]);
-        job = getjobpid(jobs, pid);
-
-        if (job == NULL) {
-            printf("(%d): No such process\n", pid);
-            return;
-        }
-    } else {
-        printf("%s: argument must be a PID or %%jobid\n", argv[0]);
-        return;
-    }
-    if (kill(-job->pid, SIGCONT) < 0) {
-        unix_error("kill (SIGCONT) error");
-    }
-    if (!strcmp(argv[0], "bg")) {
-        job->state = BG;
-        printf("[%d] (%d) %s\n", job->jid, job->pid, job->cmdline);
-    }
-    else if (!strcmp(argv[0], "fg")) {
-        job->state = FG;
-        waitfg(job->pid);
-    } else {
-        printf("do_bgfg: internal error\n");
-    }
+		if (!strcmp(argv[0], "bg")) {
+			printf("[%d] (%d) %s\n", job->jid, job->pid, job->cmdline);
+			job->state = BG;
+		} else if (!strcmp(argv[0], "fg")) {
+			job->state = FG;
+			waitfg(jobPid);
+		}
+		return;
+	}
 }
 
 /* 
@@ -339,7 +340,7 @@ void waitfg(pid_t pid)
     while (pid == fgpid(jobs)){
         sleep(1);
     }
-	return;
+    return;
 }
 
 /*****************
